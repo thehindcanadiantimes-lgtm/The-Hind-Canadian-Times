@@ -1,0 +1,6 @@
+{
+  "name": "KavSansaar - Creative Studio & Showcase",
+  "description": "A bespoke, customizable literary portfolio and creator website featuring dynamic themes, interactive verse workshop, event booking, audio soundscape, and anthology showcase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

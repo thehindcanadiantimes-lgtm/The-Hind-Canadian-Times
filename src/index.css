@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Comprehensive Print Media Rules for Newspaper Articles & E-Paper */
+@media print {
+  /* Reset body and document for clean paper print */
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt !important;
+    line-height: 1.5 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide all interactive app elements, modals overlays, headers, and navigation */
+  nav,
+  header,
+  footer,
+  button,
+  .no-print,
+  .ad-banner,
+  .print-hide {
+    display: none !important;
+  }
+
+  /* Ensure the printable area fills the page cleanly */
+  .printable-article {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 15mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+    color: #000000 !important;
+  }
+
+  .printable-article img {
+    max-width: 100% !important;
+    page-break-inside: avoid !important;
+  }
+
+  .printable-article h1,
+  .printable-article h2,
+  .printable-article h3,
+  .printable-article p {
+    page-break-inside: avoid !important;
+    color: #000000 !important;
+  }
+
+  /* Force display of print headers */
+  .print-header-visible {
+    display: block !important;
+  }
+}
