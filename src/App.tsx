@@ -1,114 +1,67 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from 'react';
-import {
-  MagazineConfig,
-  Article,
-  EPaperEdition,
-  Advertisement,
-  NewsCategory,
-  ThemePreset
+import { 
+  Article, 
+  MagazineConfig, 
+  ThemePreset, 
+  NewsCategory, 
+  EPaperEdition, 
+  Advertisement 
 } from './types';
-import {
-  DEFAULT_MAGAZINE_CONFIG,
-  INITIAL_ARTICLES,
-  INITIAL_EPAPER_EDITIONS,
-  INITIAL_ADS,
-  SAMPLE_BLOGGER_POSTS
+import { 
+  DEFAULT_MAGAZINE_CONFIG, 
+  INITIAL_ARTICLES, 
+  INITIAL_EPAPER_EDITIONS, 
+  INITIAL_ADS 
 } from './data/newsData';
 import { THEME_CONFIGS, FONT_CONFIGS } from './utils/themeHelper';
 import { fetchLiveNewsFeed } from './utils/bloggerArchiveParser';
-import { fetchArticlesFromCloud, subscribeToLiveCloudArticles, saveArticleToCloud } from './services/firebaseNews';
-
-import { MastheadHeader } from './components/MastheadHeader';
-import { AdBanner } from './components/AdBanner';
-import { FrontPageGrid } from './components/FrontPageGrid';
-import { NewsFooter } from './components/NewsFooter';
-import { ArticleDetailModal } from './components/ArticleDetailModal';
-import { ArticlePublishModal } from './components/ArticlePublishModal';
-import { EPaperModal } from './components/EPaperModal';
-import { NewsroomImportModal } from './components/NewsroomImportModal';
-import { GooglePlatformModal } from './components/GooglePlatformModal';
-import { AdvertiseMediaKitModal } from './components/AdvertiseMediaKitModal';
-import {
-  persistArticles,
-  loadArticlesFromIndexedDB,
-  scanLocalStorageForArticles,
+import { 
+  loadArticlesFromIndexedDB, 
+  persistArticles, 
+  scanLocalStorageForArticles, 
+  loadEPaperEditionsFromIndexedDB, 
   saveEPaperEditionsToIndexedDB,
-  loadEPaperEditionsFromIndexedDB,
-  deleteArticleFromStorage,
-  purgeDemoPostsFromStorage,
-  PRIMARY_STORAGE_KEY
+  getArticleTimestamp 
 } from './utils/storage';
 
-const STORAGE_KEY = 'hct_magazine_config_v2';
-const ARTICLES_STORAGE_KEY = PRIMARY_STORAGE_KEY;
+// Main Broadsheet & Magazine Components
+import { MastheadHeader } from './components/MastheadHeader';
+import { FrontPageGrid } from './components/FrontPageGrid';
+import { NewsFooter } from './components/NewsFooter';
 
-// Helper to extract timestamp from article for chronological ordering
-export const getArticleTimestamp = (art: Article): number => {
-  if (art.timestamp && art.timestamp > 0) return art.timestamp;
-  if (art.publishedAt) {
-    const isoMatch = art.publishedAt.match(/\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
-    if (isoMatch) {
-      const parsed = Date.parse(`${isoMatch[1]}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`);
-      if (!isNaN(parsed)) return parsed;
-    }
-    const monthMatch = art.publishedAt.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}/i);
-    if (monthMatch) {
-      const parsed = Date.parse(monthMatch[0]);
-      if (!isNaN(parsed)) return parsed;
-    }
-    const dayMonthMatch = art.publishedAt.match(/\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December),?\s+\d{4}/i);
-    if (dayMonthMatch) {
-      const parsed = Date.parse(dayMonthMatch[0]);
-      if (!isNaN(parsed)) return parsed;
-    }
-    const yearMatch = art.publishedAt.match(/\b(20\d{2})\b/);
-    if (yearMatch) {
-      return new Date(`${yearMatch[1]}-06-01`).getTime();
-    }
-  }
-  return 0;
-};
+// Modals
+import { ArticleDetailModal } from './components/ArticleDetailModal';
+import { EPaperModal } from './components/EPaperModal';
+import { AdvertiseMediaKitModal } from './components/AdvertiseMediaKitModal';
 
-export default function App() {
-  // Configuration
+const STORAGE_KEY = 'hct_magazine_settings';
+
+export function App() {
+  // Magazine Configuration State
   const [config, setConfig] = useState<MagazineConfig>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Migrate legacy placeholders to the user's updated settings
-        if (parsed.establishedYear === 2004) parsed.establishedYear = 2024;
-        if (!parsed.tagline || parsed.tagline.includes('Indo-Canadian Diaspora')) {
-          parsed.tagline = 'An Independent Voice for the Global Diaspora';
-        }
-        if (!parsed.editionLocation || !parsed.editionLocation.includes('U.K.')) {
-          parsed.editionLocation = 'Toronto · Vancouver · Ottawa · U.K. · Chandigarh';
-        }
-        if (parsed.contactEmail === 'editor@thehindcanadiantimes.com' || !parsed.contactEmail) {
-          parsed.contactEmail = 'thehindcanadiantimes@gmail.com';
-        }
+        parsed.contactEmail = 'thehindcanadiantimes@gmail.com';
         parsed.editorialPhone = '';
+        parsed.websiteUrl = 'https://www.thehindcanadiantimes.com';
         return { ...DEFAULT_MAGAZINE_CONFIG, ...parsed };
       }
     } catch {
       // Fallback
     }
-    return DEFAULT_MAGAZINE_CONFIG;
+    return { ...DEFAULT_MAGAZINE_CONFIG, websiteUrl: 'https://www.thehindcanadiantimes.com' };
   });
 
-  // Articles state - initial load scans all localStorage keys (rescues old versions)
+  // Articles state
   const [articles, setArticles] = useState<Article[]>(() => {
     const rescued = scanLocalStorageForArticles();
     if (rescued && rescued.length > 0) {
       rescued.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
       return rescued;
     }
-    return [];
+    return INITIAL_ARTICLES;
   });
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
 
@@ -124,70 +77,49 @@ export default function App() {
 
   // Active Modals
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
-  const [editingArticle, setEditingArticle] = useState<Article | null>(null);
-  const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isEPaperModalOpen, setIsEPaperModalOpen] = useState(false);
-  const [isNewsroomModalOpen, setIsNewsroomModalOpen] = useState(false);
-  const [isGoogleModalOpen, setIsGoogleModalOpen] = useState(false);
   const [isAdvertiseModalOpen, setIsAdvertiseModalOpen] = useState(false);
-  // Admin Mode state (Persisted in sessionStorage so readers never see admin tools)
-  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem('hct_admin_auth') === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
-  const [adminPassInput, setAdminPassInput] = useState('');
-  const [adminPassError, setAdminPassError] = useState(false);
 
-  // Toggle admin state
-  const handleAdminToggle = () => {
-    if (isAdmin) {
-      setIsAdmin(false);
-      try {
-        sessionStorage.removeItem('hct_admin_auth');
-      } catch {}
-    } else {
-      setIsAdminLoginOpen(true);
-      setAdminPassError(false);
-      setAdminPassInput('');
-    }
-  };
-
-  const handleAdminLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Default editorial pin: 2026 or admin
-    if (adminPassInput === '2026' || adminPassInput.toLowerCase() === 'admin' || adminPassInput.toLowerCase() === 'thehindcanadiantimes') {
-      setIsAdmin(true);
-      try {
-        sessionStorage.setItem('hct_admin_auth', 'true');
-      } catch {}
-      setIsAdminLoginOpen(false);
-      setAdminPassInput('');
-    } else {
-      setAdminPassError(true);
-    }
-  };
-
-  // Load from IndexedDB on startup and auto-fetch newly published dispatches in background
+  // Load articles on startup: works out-of-the-box on Vercel with 0 dependencies
   useEffect(() => {
-    loadArticlesFromIndexedDB().then((stored) => {
-      if (stored && stored.length > 0) {
-        setArticles((prev) => {
-          // Merge stored IndexedDB articles with any articles already loaded in memory
-          const map = new Map<string, Article>();
-          stored.forEach((a) => map.set(a.id, a));
-          prev.forEach((a) => map.set(a.id, a));
-          const list = Array.from(map.values());
-          list.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
-          return list;
+    // 1. Load archived articles catalog if present
+    fetch('/articles.json')
+      .then((res) => res.json())
+      .then((archiveArticles) => {
+        if (Array.isArray(archiveArticles) && archiveArticles.length > 0) {
+          setArticles((prev) => {
+            const map = new Map<string, Article>();
+            archiveArticles.forEach((a: Article) => map.set(a.id, a));
+            prev.forEach((a) => map.set(a.id, a));
+            const list = Array.from(map.values());
+            list.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
+            return list;
+          });
+        }
+        setIsStorageLoaded(true);
+      })
+      .catch(() => {
+        // Fallback cache from IndexedDB
+        loadArticlesFromIndexedDB().then((stored) => {
+          if (stored && stored.length > 0) {
+            setArticles((prev) => {
+              const map = new Map<string, Article>();
+              stored.forEach((a) => map.set(a.id, a));
+              prev.forEach((a) => map.set(a.id, a));
+              const list = Array.from(map.values());
+              list.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
+              return list;
+            });
+          }
+          setIsStorageLoaded(true);
         });
+      });
+
+    // Also restore E-Paper editions from IndexedDB
+    loadEPaperEditionsFromIndexedDB().then((storedEditions) => {
+      if (storedEditions && storedEditions.length > 0) {
+        setEpaperEditions(storedEditions);
       }
-      setIsStorageLoaded(true);
-    }).catch(() => {
-      setIsStorageLoaded(true);
     });
 
     // Auto-sync real-time dispatches from live news feed
@@ -215,29 +147,20 @@ export default function App() {
       }
     };
     syncLiveFeed();
-    const interval = setInterval(syncLiveFeed, 60000); // Check every 60 seconds for newly published dispatches
-    return () => { clearInterval(interval); if (unsubscribeCloud) unsubscribeCloud(); };
-
-    // Also restore E-Paper editions from IndexedDB
-    loadEPaperEditionsFromIndexedDB().then((storedEditions) => {
-      if (storedEditions && storedEditions.length > 0) {
-        setEpaperEditions(storedEditions);
-      }
-    });
+    const interval = setInterval(syncLiveFeed, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   // Sync configuration to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-    } catch {
-      // Ignore write errors
-    }
+    } catch {}
   }, [config]);
 
-  // Persist articles safely to IndexedDB and LocalStorage (only after initial load has verified existing DB)
+  // Persist articles safely to IndexedDB and LocalStorage
   useEffect(() => {
-    if (isStorageLoaded) {
+    if (isStorageLoaded && articles.length > 0) {
       persistArticles(articles);
     }
   }, [articles, isStorageLoaded]);
@@ -257,102 +180,36 @@ export default function App() {
     setConfig({ ...config, theme: nextTheme });
   };
 
-  // Handler: Delete Article
-  const handleDeleteArticle = async (id: string) => {
-    setArticles((prev) => prev.filter((a) => a.id !== id));
-    await deleteArticleFromStorage(id, articles);
-    if (selectedArticle?.id === id) {
-      setSelectedArticle(null);
-    }
-  };
-
   // Handler: Like Article
   const handleLikeArticle = (id: string) => {
     setArticles((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, likes: a.likes + 1 } : a))
+      prev.map((art) => (art.id === id ? { ...art, likes: (art.likes || 0) + 1 } : art))
     );
   };
 
-  // Handler: Add New Published Article
-  const handlePublishArticle = (newArt: Article) => {
-    const articleWithTime = {
-      ...newArt,
-      timestamp: newArt.timestamp || Date.now(),
-    };
-    setArticles((prev) => {
-      const updated = [articleWithTime, ...prev.filter((a) => a.id !== newArt.id)];
-      // Immediately write to storage synchronously to prevent race on refresh
-      persistArticles(updated);
-      return updated;
-    });
-    setSelectedArticle(articleWithTime);
-  };
-
-  // Handler: Import Newsroom Article
-  const handleImportNewsroomPost = (newArt: Article) => {
-    const articleWithTime = {
-      ...newArt,
-      timestamp: newArt.timestamp || getArticleTimestamp(newArt) || Date.now(),
-    };
-    setArticles((prev) => {
-      const list = [articleWithTime, ...prev.filter((a) => a.id !== newArt.id)];
-      list.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
-      return list;
-    });
-  };
-
-  // Handler: Batch Import Articles from Newsroom XML or Feed
-  const handleImportBatch = (newArticles: Article[]) => {
-    setArticles((prev) => {
-      const map = new Map<string, Article>();
-      // Keep existing
-      prev.forEach((a) => {
-        const key = a.id || a.title;
-        map.set(key, a);
-      });
-      // Add or update new
-      newArticles.forEach((a) => {
-        const key = a.id || a.title;
-        map.set(key, a);
-      });
-      const list = Array.from(map.values());
-      // Sort newest first! Today / 2026 at the top, 2025 further down
-      list.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
-      return list;
-    });
-  };
-
-  // Handler: Upload New E-Paper PDF Edition
-  const handleUploadEdition = (newEdition: EPaperEdition) => {
-    setEpaperEditions((prev) => [newEdition, ...prev]);
-  };
-
-  // Chronologically sorted filtered articles (strictly newest first!)
-  const sortedArticles = [...articles].sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
-
-  const filteredArticles = sortedArticles.filter((art) => {
+  // Filtered Articles based on Category and Search
+  const filteredArticles = articles.filter((art) => {
     const matchesCategory = selectedCategory === 'All' || art.category === selectedCategory;
     const matchesSearch =
-      searchQuery.trim() === '' ||
+      !searchQuery.trim() ||
       art.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      art.subtitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
       art.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      art.author.toLowerCase().includes(searchQuery.toLowerCase());
+      art.author.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      art.location.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
   const breakingArticle = articles.find((a) => a.isBreaking);
-  const leaderboardAd = ads.find((a) => a.slot === 'leaderboard') || ads[0];
-  const sidebarAd = ads.find((a) => a.slot === 'sidebar_mpu') || ads[1];
-  const inFeedAd = ads.find((a) => a.slot === 'in_feed') || ads[2];
-  const footerAd = ads.find((a) => a.slot === 'super_footer') || ads[3];
+  const theme = THEME_CONFIGS[config.theme] || THEME_CONFIGS.broadsheet;
+  const fonts = FONT_CONFIGS[config.fontMode] || FONT_CONFIGS.editorial_serif;
 
-  const currentTheme = THEME_CONFIGS[config.theme] || THEME_CONFIGS.broadsheet;
-  const currentFont = FONT_CONFIGS[config.fontMode] || FONT_CONFIGS.editorial_serif;
+  // Dedicated Ads
+  const sidebarAd = ads.find((a) => a.placement === 'sidebar') || ads[0];
+  const inFeedAd = ads.find((a) => a.placement === 'in_feed') || ads[1] || ads[0];
 
   return (
-    <div className={`min-h-screen ${currentTheme.canvasBg} ${currentTheme.textPrimary} ${currentFont.bodyFont} transition-colors duration-300`}>
-      {/* Newspaper Masthead & Top Navigation */}
+    <div className={`min-h-screen ${theme.bg} ${theme.textPrimary} ${fonts.bodyFont} flex flex-col selection:bg-amber-100 selection:text-amber-900 transition-colors duration-200`}>
+      {/* 1. Header: Exactly 3 Buttons: Digital E-Paper, Ad Rates, Theme */}
       <MastheadHeader
         config={config}
         selectedCategory={selectedCategory}
@@ -362,41 +219,12 @@ export default function App() {
         onSelectCategory={setSelectedCategory}
         onOpenArticle={setSelectedArticle}
         onOpenEPaper={() => setIsEPaperModalOpen(true)}
-        onOpenPublish={() => setIsPublishModalOpen(true)}
-        onOpenNewsroomTransfer={() => setIsNewsroomModalOpen(true)}
         onOpenAdvertise={() => setIsAdvertiseModalOpen(true)}
-        onOpenGooglePlatform={() => setIsGoogleModalOpen(true)}
         onToggleTheme={handleToggleTheme}
       />
 
-      {/* Main Newspaper Feed Container */}
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-        {/* Top Leaderboard Advertisement (JPG / GIF / Video) */}
-        {config.showLeaderboardAd && leaderboardAd && (
-          <AdBanner ad={leaderboardAd} onOpenAdKit={() => setIsAdvertiseModalOpen(true)} />
-        )}
-
-        {/* Category Header Indicator if filtered */}
-        {selectedCategory !== 'All' && (
-          <div className="flex items-center justify-between border-b-2 border-black pb-2">
-            <div>
-              <span className="text-[10px] font-mono uppercase tracking-widest text-red-700">
-                Editorial Section
-              </span>
-              <h2 className="text-2xl sm:text-3xl font-bold font-serif">
-                {selectedCategory}
-              </h2>
-            </div>
-            <button
-              onClick={() => setSelectedCategory('All')}
-              className="text-xs text-neutral-600 hover:text-black underline font-mono"
-            >
-              &larr; Return to Front Page
-            </button>
-          </div>
-        )}
-
-        {/* 3-Tier Front Page News Grid */}
+      {/* 2. Main News Content Grid */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 space-y-8">
         <FrontPageGrid
           articles={filteredArticles}
           config={config}
@@ -406,93 +234,44 @@ export default function App() {
           onOpenEPaper={() => setIsEPaperModalOpen(true)}
           onOpenAdKit={() => setIsAdvertiseModalOpen(true)}
           onLikeArticle={handleLikeArticle}
-          onOpenPublish={() => setIsPublishModalOpen(true)}
-          onOpenNewsroomTransfer={() => setIsNewsroomModalOpen(true)}
-          isAdmin={isAdmin}
         />
-
-        {/* Bottom Super Leaderboard Advertisement */}
-        {footerAd && (
-          <AdBanner ad={footerAd} onOpenAdKit={() => setIsAdvertiseModalOpen(true)} />
-        )}
       </main>
 
-      {/* Newspaper Colophon & Footer */}
+      {/* 3. Footer */}
       <NewsFooter
         config={config}
-        onSelectCategory={setSelectedCategory}
         onOpenEPaper={() => setIsEPaperModalOpen(true)}
-        onOpenNewsroomTransfer={() => setIsNewsroomModalOpen(true)}
-        onOpenPublish={() => setIsPublishModalOpen(true)}
         onOpenAdvertise={() => setIsAdvertiseModalOpen(true)}
-        onOpenGooglePlatform={() => setIsGoogleModalOpen(true)}
       />
 
-      {/* 1. Article Detail & Multimedia Reader Modal */}
+      {/* 4. Article Detail Modal */}
       {selectedArticle && (
         <ArticleDetailModal
           article={selectedArticle}
           config={config}
           onClose={() => setSelectedArticle(null)}
           onLike={handleLikeArticle}
-          onDelete={handleDeleteArticle}
-          onOpenEdit={isAdmin ? (art) => { setSelectedArticle(null); setEditingArticle(art); setIsPublishModalOpen(true); } : undefined}
-          isAdmin={isAdmin}
         />
       )}
 
-      {/* 2. Article Publishing Studio with Image, Video, and PDF upload */}
-      {isPublishModalOpen && (
-        <ArticlePublishModal
-          isOpen={isPublishModalOpen}
-          onClose={() => setIsPublishModalOpen(false)}
-          config={config}
-          onPublishArticle={handlePublishArticle}
-        />
-      )}
-
-      {/* 3. E-Paper PDF Multi-Page Reader & PDF Edition Uploader */}
+      {/* 5. Digital E-Paper Modal */}
       {isEPaperModalOpen && (
         <EPaperModal
-          isOpen={isEPaperModalOpen}
-          onClose={() => setIsEPaperModalOpen(false)}
-          config={config}
           editions={epaperEditions}
-          onUploadEdition={handleUploadEdition}
-        />
-      )}
-
-      {/* 4. Google News Article Importer & Migration Tool */}
-      {isNewsroomModalOpen && (
-        <NewsroomImportModal
-          isOpen={isNewsroomModalOpen}
-          onClose={() => setIsNewsroomModalOpen(false)}
           config={config}
-          samplePosts={SAMPLE_BLOGGER_POSTS}
-          articles={articles}
-          onImportPost={handleImportNewsroomPost}
-          onImportBatch={handleImportBatch}
+          onClose={() => setIsEPaperModalOpen(false)}
         />
       )}
 
-      {/* 5. Google Cloud Run, AdSense & News Integration Details */}
-      {isGoogleModalOpen && (
-        <GooglePlatformModal
-          isOpen={isGoogleModalOpen}
-          onClose={() => setIsGoogleModalOpen(false)}
-          config={config}
-        />
-      )}
-
-      {/* 6. Media Kit, Ad Rate Card & Interactive Creative Mockup Simulator */}
+      {/* 6. Media Kit & Ad Rates Modal */}
       {isAdvertiseModalOpen && (
         <AdvertiseMediaKitModal
-          isOpen={isAdvertiseModalOpen}
-          onClose={() => setIsAdvertiseModalOpen(false)}
           config={config}
+          onClose={() => setIsAdvertiseModalOpen(false)}
         />
       )}
-    
-      </div>
+    </div>
   );
 }
+
+export default App;
