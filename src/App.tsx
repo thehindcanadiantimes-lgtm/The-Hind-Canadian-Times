@@ -9,19 +9,17 @@ import {
 } from './types';
 import { 
   DEFAULT_MAGAZINE_CONFIG, 
-  INITIAL_ARTICLES, 
   INITIAL_EPAPER_EDITIONS, 
   INITIAL_ADS 
 } from './data/newsData';
+import { ALL_ARCHIVED_ARTICLES } from './data/articlesArchive';
 import { THEME_CONFIGS, FONT_CONFIGS } from './utils/themeHelper';
 import { fetchLiveNewsFeed } from './utils/bloggerArchiveParser';
 import { 
   loadArticlesFromIndexedDB, 
   persistArticles, 
-  scanLocalStorageForArticles, 
   loadEPaperEditionsFromIndexedDB, 
-  saveEPaperEditionsToIndexedDB,
-  getArticleTimestamp 
+  saveEPaperEditionsToIndexedDB 
 } from './utils/storage';
 
 // Main Broadsheet & Magazine Components
@@ -54,16 +52,13 @@ export function App() {
     return { ...DEFAULT_MAGAZINE_CONFIG, websiteUrl: 'https://www.thehindcanadiantimes.com' };
   });
 
-  // Articles state
+  // Articles state: Instantly loads all 1,185 articles right out of the box!
   const [articles, setArticles] = useState<Article[]>(() => {
-    const rescued = scanLocalStorageForArticles();
-    if (rescued && rescued.length > 0) {
-      rescued.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
-      return rescued;
+    if (ALL_ARCHIVED_ARTICLES && ALL_ARCHIVED_ARTICLES.length > 0) {
+      return ALL_ARCHIVED_ARTICLES;
     }
-    return INITIAL_ARTICLES;
+    return [];
   });
-  const [isStorageLoaded, setIsStorageLoaded] = useState(false);
 
   // E-Paper Editions state
   const [epaperEditions, setEpaperEditions] = useState<EPaperEdition[]>(INITIAL_EPAPER_EDITIONS);
@@ -80,49 +75,16 @@ export function App() {
   const [isEPaperModalOpen, setIsEPaperModalOpen] = useState(false);
   const [isAdvertiseModalOpen, setIsAdvertiseModalOpen] = useState(false);
 
-  // Load articles on startup: works out-of-the-box on Vercel with 0 dependencies
+  // Background live feed auto-sync for newly published dispatches
   useEffect(() => {
-    // 1. Load archived articles catalog if present
-    fetch('/articles.json')
-      .then((res) => res.json())
-      .then((archiveArticles) => {
-        if (Array.isArray(archiveArticles) && archiveArticles.length > 0) {
-          setArticles((prev) => {
-            const map = new Map<string, Article>();
-            archiveArticles.forEach((a: Article) => map.set(a.id, a));
-            prev.forEach((a) => map.set(a.id, a));
-            const list = Array.from(map.values());
-            list.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
-            return list;
-          });
-        }
-        setIsStorageLoaded(true);
-      })
-      .catch(() => {
-        // Fallback cache from IndexedDB
-        loadArticlesFromIndexedDB().then((stored) => {
-          if (stored && stored.length > 0) {
-            setArticles((prev) => {
-              const map = new Map<string, Article>();
-              stored.forEach((a) => map.set(a.id, a));
-              prev.forEach((a) => map.set(a.id, a));
-              const list = Array.from(map.values());
-              list.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
-              return list;
-            });
-          }
-          setIsStorageLoaded(true);
-        });
-      });
-
-    // Also restore E-Paper editions from IndexedDB
+    // Restore E-Paper editions from IndexedDB if saved
     loadEPaperEditionsFromIndexedDB().then((storedEditions) => {
       if (storedEditions && storedEditions.length > 0) {
         setEpaperEditions(storedEditions);
       }
     });
 
-    // Auto-sync real-time dispatches from live news feed
+    // Auto-sync real-time dispatches from live news feed every 60 seconds
     const syncLiveFeed = async () => {
       const feedUrls = [
         'https://thehindcanadiantimes.blogspot.com/feeds/posts/default?alt=json&max-results=500',
@@ -138,7 +100,7 @@ export function App() {
               livePosts.forEach((a) => map.set(a.id, a));
               prev.forEach((a) => map.set(a.id, a));
               const merged = Array.from(map.values());
-              merged.sort((a, b) => getArticleTimestamp(b) - getArticleTimestamp(a));
+              merged.sort((a, b) => ((b.timestamp || 0) - (a.timestamp || 0)));
               return merged;
             });
             break;
@@ -146,6 +108,7 @@ export function App() {
         } catch {}
       }
     };
+
     syncLiveFeed();
     const interval = setInterval(syncLiveFeed, 60000);
     return () => clearInterval(interval);
@@ -158,12 +121,12 @@ export function App() {
     } catch {}
   }, [config]);
 
-  // Persist articles safely to IndexedDB and LocalStorage
+  // Persist articles safely to IndexedDB
   useEffect(() => {
-    if (isStorageLoaded && articles.length > 0) {
+    if (articles.length > 0) {
       persistArticles(articles);
     }
-  }, [articles, isStorageLoaded]);
+  }, [articles]);
 
   // Persist EPaper editions safely to IndexedDB
   useEffect(() => {
@@ -199,7 +162,7 @@ export function App() {
     return matchesCategory && matchesSearch;
   });
 
-  const breakingArticle = articles.find((a) => a.isBreaking);
+  const breakingArticle = articles.find((a) => a.isBreaking) || articles[0];
   const theme = THEME_CONFIGS[config.theme] || THEME_CONFIGS.broadsheet;
   const fonts = FONT_CONFIGS[config.fontMode] || FONT_CONFIGS.editorial_serif;
 
